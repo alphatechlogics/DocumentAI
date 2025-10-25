@@ -26,7 +26,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyCYACQUXFwk9DFuM54vQJPJy3zcDt
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Initialize Gemini model - using the correct model name
-model = genai.GenerativeModel('gemini-1.5-flash-latest')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # Response models
 class DiagnosisResponse(BaseModel):
