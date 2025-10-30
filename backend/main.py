@@ -15,7 +15,6 @@ import cloudinary.uploader
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 
-
 load_dotenv()
 
 # Initialize FastAPI app
@@ -53,6 +52,7 @@ if missing_vars:
 # Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.5-flash')
+chat_model = genai.GenerativeModel('gemini-2.5-flash')  # Separate model for chat
 
 # Configure Cloudinary
 cloudinary.config(
@@ -65,22 +65,7 @@ cloudinary.config(
 mongodb_client = AsyncIOMotorClient(MONGODB_URL)
 db = mongodb_client.medical_analysis
 records_collection = db.medical_records
-
-# Configure Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.5-flash')
-
-# Configure Cloudinary
-cloudinary.config(
-    cloud_name=CLOUDINARY_CLOUD_NAME,
-    api_key=CLOUDINARY_API_KEY,
-    api_secret=CLOUDINARY_API_SECRET
-)
-
-# MongoDB connection
-mongodb_client = AsyncIOMotorClient(MONGODB_URL)
-db = mongodb_client.medical_analysis
-records_collection = db.medical_records
+chat_history_collection = db.chat_history  # New collection for chat history
 
 # Response models
 class DiagnosisResponse(BaseModel):
@@ -107,29 +92,178 @@ class StoredDiagnosisResponse(BaseModel):
         populate_by_name = True
         json_encoders = {ObjectId: str}
 
+# New models for chat endpoint
+class ChatMessage(BaseModel):
+    message: str
+    patient_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    response_english: str
+    response_arabic: str
+    session_id: str
+    is_medical: bool
+    confidence_score: float
+
+class ChatHistoryResponse(BaseModel):
+    id: str = Field(alias="_id")
+    patient_id: Optional[str]
+    session_id: str
+    user_message: str
+    ai_response_english: str
+    ai_response_arabic: str
+    is_medical: bool
+    confidence_score: float
+    created_at: datetime
+    
+    class Config:
+        populate_by_name = True
+        json_encoders = {ObjectId: str}
+
 class ErrorResponse(BaseModel):
     error: str
     detail: str
 
+# Medical context and restrictions
+MEDICAL_SYSTEM_PROMPT = """
+You are a specialized medical AI assistant designed to provide medical information and answer health-related questions. 
 
-# Startup event
-@app.on_event("startup")
-async def startup_db_client():
-    """Connect to MongoDB on startup"""
+STRICT GUIDELINES:
+1. ONLY answer medical, health, wellness, and healthcare-related questions
+2. If a question is NOT medical-related, politely decline to answer and explain that you're a medical assistant
+3. Always provide responses in both English and Arabic
+4. Be clear, accurate, and professional in your medical explanations
+5. Include a confidence score (0-100) based on how well you can answer the question
+6. Always include disclaimers that you're an AI and recommend consulting healthcare professionals
+
+MEDICAL TOPICS YOU CAN DISCUSS:
+- Symptoms and conditions
+- Medications and treatments
+- Medical procedures
+- Health and wellness advice
+- Disease information
+- First aid and emergency care
+- Nutrition and exercise for health
+- Mental health topics
+- Medical terminology explanations
+
+NON-MEDICAL TOPICS TO REJECT:
+- Politics, religion, or personal opinions
+- Technical or programming questions
+- General knowledge or trivia
+- Entertainment or sports
+- Personal advice unrelated to health
+- Legal or financial advice
+
+RESPONSE FORMAT:
+Provide your response in this exact JSON format:
+{
+    "response_english": "Your detailed response in English",
+    "response_arabic": "ردك التفصيلي بالعربية",
+    "is_medical": true/false,
+    "confidence_score": 85
+}
+
+If the question is not medical, set "is_medical" to false and provide an explanation.
+"""
+
+def is_medical_question(question: str) -> bool:
+    """Check if the question is medical-related"""
+    medical_keywords = [
+        # Symptoms and conditions
+        'pain', 'hurt', 'symptom', 'fever', 'headache', 'cough', 'cold', 'flu', 
+        'virus', 'infection', 'disease', 'illness', 'sick', 'health', 'medical',
+        'doctor', 'hospital', 'clinic', 'medicine', 'drug', 'pill', 'tablet',
+        'treatment', 'therapy', 'diagnosis', 'prognosis', 'prescription',
+        
+        # Body parts and systems
+        'heart', 'lung', 'liver', 'kidney', 'stomach', 'brain', 'blood',
+        'bone', 'muscle', 'nerve', 'skin', 'eye', 'ear', 'nose', 'throat',
+        'chest', 'back', 'arm', 'leg', 'head', 'foot', 'hand',
+        
+        # Medical specialties
+        'cardiology', 'neurology', 'pediatrics', 'surgery', 'dentist',
+        'psychology', 'psychiatry', 'dermatology', 'orthopedics',
+        
+        # Arabic medical terms
+        'ألم', 'مرض', 'علاج', 'طبيب', 'مستشفى', 'دواء', 'صحة', 'عرض',
+        'حمى', 'سعال', 'صداع', 'قلب', 'رئة', 'كبد', 'كلية', 'معدة'
+    ]
+    
+    question_lower = question.lower()
+    return any(keyword in question_lower for keyword in medical_keywords)
+
+async def generate_medical_chat_response(user_message: str) -> dict:
+    """Generate medical chat response using Gemini"""
     try:
-        await mongodb_client.admin.command('ping')
-        print("✅ Connected to MongoDB successfully")
+        # Check if question is medical
+        if not is_medical_question(user_message):
+            return {
+                "response_english": "I apologize, but I'm designed specifically to answer medical and health-related questions only. Please ask me about symptoms, conditions, treatments, or general health information.",
+                "response_arabic": "أعتذر، ولكنني مصمم خصيصًا للإجابة على الأسئلة الطبية والمتعلقة بالصحة فقط. يرجى سؤالي عن الأعراض، الحالات، العلاجات، أو المعلومات الصحية العامة.",
+                "is_medical": False,
+                "confidence_score": 100.0
+            }
+        
+        # Create prompt with medical context
+        prompt = f"""
+        {MEDICAL_SYSTEM_PROMPT}
+        
+        User Question: {user_message}
+        
+        Please analyze this question and provide a helpful, accurate medical response in both English and Arabic.
+        """
+        
+        response = chat_model.generate_content(prompt)
+        response_text = response.text
+        
+        # Parse JSON response
+        try:
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                parsed_response = json.loads(json_match.group())
+                return parsed_response
+        except:
+            pass
+        
+        # Fallback if JSON parsing fails
+        return {
+            "response_english": "I've analyzed your medical question. " + response_text[:500] + "\n\n⚠️ Disclaimer: I am an AI assistant. Please consult with a qualified healthcare professional for medical advice.",
+            "response_arabic": "لقد قمت بتحليل سؤالك الطبي. " + "يرجى استشارة أخصائي طبي مؤهل للحصول على المشورة الطبية المناسبة." + "\n\n⚠️ تنبيه: أنا مساعد ذكي. يرجى استشارة أخصائي طبي مؤهل للحصول على المشورة الطبية.",
+            "is_medical": True,
+            "confidence_score": 75.0
+        }
+        
     except Exception as e:
-        print(f"❌ Failed to connect to MongoDB: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generating chat response: {str(e)}")
 
-
-# Shutdown event
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    """Close MongoDB connection on shutdown"""
-    mongodb_client.close()
-    print("MongoDB connection closed")
-
+async def save_chat_history(
+    user_message: str,
+    ai_response: dict,
+    patient_id: Optional[str] = None,
+    session_id: Optional[str] = None
+) -> str:
+    """Save chat conversation to MongoDB"""
+    try:
+        if not session_id:
+            session_id = str(ObjectId())
+        
+        document = {
+            "patient_id": patient_id,
+            "session_id": session_id,
+            "user_message": user_message,
+            "ai_response_english": ai_response["response_english"],
+            "ai_response_arabic": ai_response["response_arabic"],
+            "is_medical": ai_response["is_medical"],
+            "confidence_score": ai_response["confidence_score"],
+            "created_at": datetime.utcnow()
+        }
+        
+        result = await chat_history_collection.insert_one(document)
+        return session_id
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error saving chat history: {str(e)}")
 
 def extract_confidence_score(text: str) -> float:
     """Extract confidence score from the response text"""
@@ -146,7 +280,6 @@ def extract_confidence_score(text: str) -> float:
     
     return 0.75
 
-
 def parse_json_response(text: str) -> dict:
     """Parse JSON from text response"""
     try:
@@ -156,7 +289,6 @@ def parse_json_response(text: str) -> dict:
     except:
         pass
     return None
-
 
 async def upload_to_cloudinary(image_bytes: bytes, filename: str) -> str:
     """Upload image to Cloudinary and return URL"""
@@ -177,7 +309,6 @@ async def upload_to_cloudinary(image_bytes: bytes, filename: str) -> str:
         return upload_result['secure_url']
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error uploading to Cloudinary: {str(e)}")
-
 
 async def analyze_medical_image(image_bytes: bytes, filename: str) -> dict:
     """Analyze medical image using Gemini"""
@@ -258,7 +389,6 @@ Remember: This is for educational purposes. Always recommend consulting with a q
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error analyzing image: {str(e)}")
 
-
 async def save_to_mongodb(image_url: str, analysis_result: dict, patient_id: Optional[str] = None) -> str:
     """Save analysis result to MongoDB"""
     try:
@@ -279,6 +409,22 @@ async def save_to_mongodb(image_url: str, analysis_result: dict, patient_id: Opt
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error saving to MongoDB: {str(e)}")
 
+# Startup event
+@app.on_event("startup")
+async def startup_db_client():
+    """Connect to MongoDB on startup"""
+    try:
+        await mongodb_client.admin.command('ping')
+        print("✅ Connected to MongoDB successfully")
+    except Exception as e:
+        print(f"❌ Failed to connect to MongoDB: {e}")
+
+# Shutdown event
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    """Close MongoDB connection on shutdown"""
+    mongodb_client.close()
+    print("MongoDB connection closed")
 
 @app.get("/")
 async def root():
@@ -291,10 +437,11 @@ async def root():
             "/analyze-and-store": "POST - Analyze and store in database",
             "/records": "GET - Get all medical records",
             "/records/{record_id}": "GET - Get specific record",
+            "/chat": "POST - Chat with medical AI",
+            "/chat/history": "GET - Get chat history",
             "/health": "GET - Check API health"
         }
     }
-
 
 @app.get("/health")
 async def health_check():
@@ -305,7 +452,6 @@ async def health_check():
         "mongodb": "connected" if mongodb_client else "disconnected",
         "cloudinary": "configured" if CLOUDINARY_CLOUD_NAME != "your-cloud-name" else "not configured"
     }
-
 
 @app.post("/analyze", response_model=DiagnosisResponse)
 async def analyze_image(file: UploadFile = File(...)):
@@ -342,7 +488,6 @@ async def analyze_image(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
-
 
 @app.post("/analyze-and-store", response_model=StoredDiagnosisResponse)
 async def analyze_and_store_image(
@@ -398,7 +543,6 @@ async def analyze_and_store_image(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
-
 @app.get("/records", response_model=List[StoredDiagnosisResponse])
 async def get_all_records(
     patient_id: Optional[str] = None,
@@ -433,7 +577,6 @@ async def get_all_records(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching records: {str(e)}")
 
-
 @app.get("/records/{record_id}", response_model=StoredDiagnosisResponse)
 async def get_record_by_id(record_id: str):
     """
@@ -457,7 +600,6 @@ async def get_record_by_id(record_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching record: {str(e)}")
 
-
 @app.delete("/records/{record_id}")
 async def delete_record(record_id: str):
     """
@@ -480,6 +622,105 @@ async def delete_record(record_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting record: {str(e)}")
 
+@app.post("/chat", response_model=ChatResponse)
+async def medical_chat(chat_message: ChatMessage):
+    """
+    Chat with medical AI - Only answers medical questions
+    
+    Args:
+        chat_message: User message and optional patient/session ID
+    
+    Returns:
+        Medical response in English and Arabic
+    """
+    try:
+        if not chat_message.message or chat_message.message.strip() == "":
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
+        
+        # Generate AI response
+        ai_response = await generate_medical_chat_response(chat_message.message)
+        
+        # Save to chat history
+        session_id = await save_chat_history(
+            user_message=chat_message.message,
+            ai_response=ai_response,
+            patient_id=chat_message.patient_id,
+            session_id=chat_message.session_id
+        )
+        
+        return ChatResponse(
+            response_english=ai_response["response_english"],
+            response_arabic=ai_response["response_arabic"],
+            session_id=session_id,
+            is_medical=ai_response["is_medical"],
+            confidence_score=ai_response["confidence_score"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error in chat: {str(e)}")
+
+@app.get("/chat/history", response_model=List[ChatHistoryResponse])
+async def get_chat_history(
+    session_id: Optional[str] = None,
+    patient_id: Optional[str] = None,
+    limit: int = 50,
+    skip: int = 0
+):
+    """
+    Get chat history
+    
+    Args:
+        session_id: Filter by session ID
+        patient_id: Filter by patient ID
+        limit: Maximum number of records
+        skip: Number of records to skip
+    
+    Returns:
+        List of chat messages
+    """
+    try:
+        query = {}
+        if session_id:
+            query["session_id"] = session_id
+        if patient_id:
+            query["patient_id"] = patient_id
+        
+        cursor = chat_history_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        records = await cursor.to_list(length=limit)
+        
+        # Convert ObjectId to string
+        for record in records:
+            record["_id"] = str(record["_id"])
+        
+        return records
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching chat history: {str(e)}")
+
+@app.delete("/chat/history/{session_id}")
+async def delete_chat_session(session_id: str):
+    """
+    Delete all chat messages from a session
+    
+    Args:
+        session_id: Session ID to delete
+    
+    Returns:
+        Success message
+    """
+    try:
+        result = await chat_history_collection.delete_many({"session_id": session_id})
+        
+        return {
+            "message": "Chat session deleted successfully",
+            "session_id": session_id,
+            "deleted_count": result.deleted_count
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting chat session: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

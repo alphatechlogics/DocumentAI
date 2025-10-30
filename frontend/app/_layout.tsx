@@ -1,91 +1,62 @@
-import { Footer } from "@/components/Footer";
-import { MenuButton, MenuContent } from "@/components/MenuButton.";
-import SplashScreen from "@/components/SplashScreen";
-import { DualToneBackground } from "@/components/ui/DualToneBackground";
-import { AuthProvider } from "@/src/context/AuthContext";
-import { ChatProvider } from "@/src/context/ChatContext";
-import { RTLProvider } from "@/src/context/CompleteRTLContext";
-import { DiagnosisProvider } from "@/src/context/DiagnosisContext";
-import { MenuProvider } from "@/src/context/MenuContext";
-import { Stack, useSegments } from "expo-router";
-import React, { useState } from "react";
-export default function RootLayout() {
+import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { Slot } from "expo-router";
+import React, { useEffect, useState } from "react";
+import { PaperProvider } from "react-native-paper";
+import { useRouter, useSegments } from "expo-router";
+
+function RouteGuard({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const { state } = useAuth();
   const segments = useSegments();
-  const isAuthRoute = segments[0] === "(auth)";
-  const isHomeRoute = segments[0] === "home";
-  const [appReady, setAppReady] = useState(false);
+  const [isNavigationReady, setIsNavigationReady] = useState(false);
 
-  if (!appReady) {
-    return <SplashScreen onFinish={() => setAppReady(true)} />;
-  }
+  // Mark navigation as ready after first render
+  useEffect(() => {
+    setIsNavigationReady(true);
+  }, []);
 
+  useEffect(() => {
+    // Wait for navigation to be ready
+    if (!isNavigationReady) return;
+
+    // Don't do anything while loading
+    if (state.isLoading) return;
+
+    // Check if we're in the auth route
+    const inAuthGroup = segments[0] === "auth";
+
+    console.log("RouteGuard:", {
+      user: state.user,
+      segments,
+      inAuthGroup,
+      isNavigationReady,
+    });
+
+    // Use setTimeout to defer navigation to next tick
+    const timeoutId = setTimeout(() => {
+      if (!state.user && !inAuthGroup) {
+        // User is not signed in and not on auth screen, redirect to auth
+        router.replace("/auth");
+      } else if (state.user && inAuthGroup) {
+        // User is signed in but still on auth screen, redirect to home
+        router.replace("/(tabs)");
+      }
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
+  }, [state.user, state.isLoading, segments, isNavigationReady]);
+
+  return <>{children}</>;
+}
+
+export default function RootLayout() {
   return (
-    <RTLProvider>
-      <AuthProvider>
-        <ChatProvider>
-          <MenuProvider>
-            <DiagnosisProvider>
-              <DualToneBackground>
-                {/* Display MenuContent at the root level so it's always on top */}
-                {!isAuthRoute && <MenuContent isHome={isHomeRoute} />}
-
-                {/* MenuButton for home screen - only show on home screen */}
-                {!isAuthRoute && isHomeRoute && <MenuButton />}
-
-                <Stack
-                  screenOptions={({ route }) => ({
-                    headerShown: !isAuthRoute && !isHomeRoute,
-                    headerTitleStyle: {
-                      fontWeight: "600",
-                      fontSize: 18,
-                    },
-                    headerRight: () => {
-                      // Only return the MenuButton if we're not on the home screen and not on auth routes
-                      return !isAuthRoute && !isHomeRoute ? (
-                        <MenuButton inHeader />
-                      ) : null;
-                    },
-                    // headerStyle: {
-                    //   backgroundColor: "transparent",
-                    // },
-                    // headerTitleAlign: "center",
-                    // headerRightContainerStyle: {
-                    //   paddingRight: 10,
-                    // },
-                  })}
-                >
-                  <Stack.Screen
-                    name="(auth)"
-                    options={{ headerShown: false }}
-                  />
-                  <Stack.Screen name="home" options={{ headerShown: false }} />
-
-                  {/* Other screens */}
-                  <Stack.Screen
-                    name="camera"
-                    options={{ title: "Scan Skin" }}
-                  />
-                  <Stack.Screen
-                    name="chatbot"
-                    options={{ title: "Chat Bot" }}
-                  />
-                  <Stack.Screen
-                    name="symptoms"
-                    options={{ title: "Symptoms Quiz" }}
-                  />
-                  <Stack.Screen name="details" options={{ title: "Details" }} />
-                  <Stack.Screen name="history" options={{ title: "History" }} />
-                  <Stack.Screen
-                    name="+not-found"
-                    options={{ title: "Not Found" }}
-                  />
-                </Stack>
-                <Footer />
-              </DualToneBackground>
-            </DiagnosisProvider>
-          </MenuProvider>
-        </ChatProvider>
-      </AuthProvider>
-    </RTLProvider>
+    <AuthProvider>
+      <PaperProvider>
+        <RouteGuard>
+          <Slot />
+        </RouteGuard>
+      </PaperProvider>
+    </AuthProvider>
   );
 }
