@@ -21,42 +21,23 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
+          headerShown: false,
           title: "Home",
           tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons
-              name="calendar-today"
-              size={size}
-              color={color}
-            />
-          ),
-        }}
-      />
-      {/* <Tabs.Screen
-        name="streaks"
-        options={{
-          title: "Streaks",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons
-              name="chart-line"
-              size={size}
-              color={color}
-            />
+            <MaterialCommunityIcons name="home" size={size} color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="add-habit"
+        name="chat"
         options={{
-          title: "Add Habit",
+          headerShown: false,
+          title: "Chat",
           tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons
-              name="plus-circle"
-              size={size}
-              color={color}
-            />
+            <MaterialCommunityIcons name="chat" size={size} color={color} />
           ),
         }}
-      /> */}
+      />
     </Tabs>
   );
 }

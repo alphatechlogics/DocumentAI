@@ -4,12 +4,17 @@ import {
   StyleSheet,
   TouchableOpacity,
   TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 
 export default function Index() {
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    >
       <StatusBar style="light" />
 
       {/* Header */}
@@ -22,35 +27,47 @@ export default function Index() {
         </View>
       </View>
 
-      {/* Main Content */}
-      <View style={styles.content}>
-        <TextInput
-          style={styles.input}
-          placeholder="How may I help you today?"
-          placeholderTextColor="#999"
-        />
+      {/* Main Content with space-around */}
+      <View style={styles.mainContainer}>
+        <View style={styles.contentWrapper}>
+          {/* Input Field */}
+          <TextInput
+            style={styles.input}
+            placeholder="How may I help you today?"
+            placeholderTextColor="#999"
+          />
 
-        <TouchableOpacity style={styles.primaryButton}>
-          <Text style={styles.primaryButtonText}>I want a Diagnosis 🩺</Text>
-        </TouchableOpacity>
+          {/* Diagnosis Group */}
+          <View style={styles.diagnosisGroup}>
+            <TouchableOpacity style={styles.primaryButton}>
+              <Text style={styles.primaryButtonText}>
+                I want a Diagnosis 🩺
+              </Text>
+            </TouchableOpacity>
 
-        <TouchableOpacity style={styles.secondaryButton}>
-          <Text style={styles.secondaryButtonText}>Diagnosis History</Text>
-        </TouchableOpacity>
+            <TouchableOpacity style={styles.smallSecondaryButton}>
+              <Text style={styles.smallSecondaryButtonText}>
+                Diagnosis History
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-        <TouchableOpacity style={styles.primaryButton}>
-          <Text style={styles.primaryButtonText}>I have a Question 💬</Text>
-        </TouchableOpacity>
+          {/* Other Buttons */}
+          <TouchableOpacity style={styles.primaryButton}>
+            <Text style={styles.primaryButtonText}>I have a Question 💬</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity style={styles.primaryButton}>
-          <Text style={styles.primaryButtonText}>Chat With Me 💬</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.primaryButton}>
+            <Text style={styles.primaryButtonText}>Chat With Me 💬</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity style={styles.contactButton}>
-          <Text style={styles.contactButtonText}>contact us 📧</Text>
-        </TouchableOpacity>
+          {/* Contact Button */}
+          <TouchableOpacity style={styles.smallContactButton}>
+            <Text style={styles.smallContactButtonText}>contact us 📧</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -86,10 +103,14 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#FFFFFF",
   },
-  content: {
+  mainContainer: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 30,
+  },
+  contentWrapper: {
+    flex: 1,
+    justifyContent: "space-around", // This creates equal space around all items
+    paddingVertical: 80, // Small padding for breathing room
   },
   input: {
     borderWidth: 1,
@@ -98,49 +119,58 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     paddingVertical: 12,
     fontSize: 14,
-    marginBottom: 20,
     color: "#333",
+    height: 50,
+  },
+  diagnosisGroup: {
+    // No margins needed, space-around handles it
   },
   primaryButton: {
     backgroundColor: "#5E4AB4",
     borderRadius: 25,
     paddingVertical: 15,
     paddingHorizontal: 20,
-    marginBottom: 15,
     alignItems: "center",
+    minHeight: 50,
+    justifyContent: "center",
   },
   primaryButtonText: {
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "600",
+    textAlign: "center",
   },
-  secondaryButton: {
+  smallSecondaryButton: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 25,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    marginBottom: 15,
+    borderRadius: 15,
+    paddingVertical: 8,
+    paddingHorizontal: 15,
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#5E4AB4",
+    alignSelf: "center",
+    marginTop: 8, // Small gap below main diagnosis button
+    width: "60%",
   },
-  secondaryButtonText: {
+  smallSecondaryButtonText: {
     color: "#5E4AB4",
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "600",
+    textAlign: "center",
   },
-  contactButton: {
+  smallContactButton: {
     backgroundColor: "#5E4AB4",
-    borderRadius: 25,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    marginTop: 10,
+    borderRadius: 15, // Same border radius as Diagnosis History
+    paddingVertical: 8, // Same padding as Diagnosis History
+    paddingHorizontal: 25, // Slightly wider for contact text
     alignItems: "center",
     alignSelf: "center",
+    minHeight: 35, // Same height as Diagnosis History
+    justifyContent: "center",
   },
-  contactButtonText: {
+  smallContactButtonText: {
     color: "#FFFFFF",
-    fontSize: 14,
+    fontSize: 14, // Same font size as Diagnosis History
     fontWeight: "600",
   },
 });

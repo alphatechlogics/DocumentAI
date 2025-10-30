@@ -62,7 +62,7 @@ export default function AuthScreen() {
         await signup(name, email, password);
         Alert.alert(
           "Success",
-          "Account created successfully! Welcome to AI Doctor.",
+          "Account created successfully! Welcome to DocumentAI.",
           [{ text: "OK" }]
         );
       } else {
@@ -101,8 +101,8 @@ export default function AuthScreen() {
           </Text>
           <Text style={styles.subtitle} variant="bodyMedium">
             {isSignUp
-              ? "Sign up to get started with AI Doctor"
-              : "Sign in to continue to AI Doctor"}
+              ? "Sign up to get started with DocumentAI"
+              : "Sign in to continue to DocumentAI"}
           </Text>
 
           {isSignUp && (
