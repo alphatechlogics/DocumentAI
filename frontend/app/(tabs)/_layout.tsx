@@ -38,6 +38,19 @@ export default function TabsLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="diagnosis"
+        options={{
+          title: "Diagnose",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons
+              name="camera-plus"
+              size={size}
+              color={color}
+            />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

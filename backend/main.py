@@ -14,16 +14,84 @@ import cloudinary
 import cloudinary.uploader
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 load_dotenv()
 
-# Initialize FastAPI app
-app = FastAPI(title="Medical Image Analysis API", version="1.0.0")
+# MongoDB connection setup
+class MongoDB:
+    def __init__(self):
+        self.client = None
+        self.db = None
+        self.records_collection = None
+        self.chat_history_collection = None
+    
+    async def connect(self):
+        """Connect to MongoDB"""
+        try:
+            MONGODB_URL = os.getenv("MONGODB_URL")
+            if not MONGODB_URL:
+                raise Exception("MONGODB_URL environment variable is required")
+            
+            self.client = AsyncIOMotorClient(
+                MONGODB_URL,
+                maxPoolSize=10,
+                minPoolSize=1,
+                retryWrites=True,
+                w="majority"
+            )
+            self.db = self.client.medical_analysis
+            self.records_collection = self.db.medical_records
+            self.chat_history_collection = self.db.chat_history
+            
+            # Test connection
+            await self.client.admin.command('ping')
+            print("✅ Connected to MongoDB successfully")
+            
+        except Exception as e:
+            print(f"❌ Failed to connect to MongoDB: {e}")
+            raise
+    
+    async def close(self):
+        """Close MongoDB connection"""
+        if self.client:
+            self.client.close()
+            print("MongoDB connection closed")
+    
+    def get_records_collection(self):
+        """Get records collection"""
+        if not self.records_collection:
+            raise HTTPException(status_code=500, detail="Database not connected")
+        return self.records_collection
+    
+    def get_chat_history_collection(self):
+        """Get chat history collection"""
+        if not self.chat_history_collection:
+            raise HTTPException(status_code=500, detail="Database not connected")
+        return self.chat_history_collection
+
+# Create MongoDB instance
+mongodb = MongoDB()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await mongodb.connect()
+    yield
+    # Shutdown
+    await mongodb.close()
+
+# Initialize FastAPI with lifespan
+app = FastAPI(
+    title="Medical Image Analysis API", 
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -52,7 +120,7 @@ if missing_vars:
 # Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.5-flash')
-chat_model = genai.GenerativeModel('gemini-2.5-flash')  # Separate model for chat
+chat_model = genai.GenerativeModel('gemini-2.5-flash')
 
 # Configure Cloudinary
 cloudinary.config(
@@ -61,13 +129,7 @@ cloudinary.config(
     api_secret=CLOUDINARY_API_SECRET
 )
 
-# MongoDB connection
-mongodb_client = AsyncIOMotorClient(MONGODB_URL)
-db = mongodb_client.medical_analysis
-records_collection = db.medical_records
-chat_history_collection = db.chat_history  # New collection for chat history
-
-# Response models
+# Response models (keep your existing models)
 class DiagnosisResponse(BaseModel):
     diagnosis_english: str
     diagnosis_arabic: str
@@ -92,7 +154,6 @@ class StoredDiagnosisResponse(BaseModel):
         populate_by_name = True
         json_encoders = {ObjectId: str}
 
-# New models for chat endpoint
 class ChatMessage(BaseModel):
     message: str
     patient_id: Optional[str] = None
@@ -124,7 +185,7 @@ class ErrorResponse(BaseModel):
     error: str
     detail: str
 
-# Medical context and restrictions
+# Medical context and restrictions (keep your existing)
 MEDICAL_SYSTEM_PROMPT = """
 You are a specialized medical AI assistant designed to provide medical information and answer health-related questions. 
 
@@ -248,6 +309,8 @@ async def save_chat_history(
         if not session_id:
             session_id = str(ObjectId())
         
+        collection = mongodb.get_chat_history_collection()
+        
         document = {
             "patient_id": patient_id,
             "session_id": session_id,
@@ -259,7 +322,7 @@ async def save_chat_history(
             "created_at": datetime.utcnow()
         }
         
-        result = await chat_history_collection.insert_one(document)
+        result = await collection.insert_one(document)
         return session_id
         
     except Exception as e:
@@ -392,6 +455,8 @@ Remember: This is for educational purposes. Always recommend consulting with a q
 async def save_to_mongodb(image_url: str, analysis_result: dict, patient_id: Optional[str] = None) -> str:
     """Save analysis result to MongoDB"""
     try:
+        collection = mongodb.get_records_collection()
+        
         document = {
             "patient_id": patient_id,
             "image_url": image_url,
@@ -404,27 +469,10 @@ async def save_to_mongodb(image_url: str, analysis_result: dict, patient_id: Opt
             "created_at": datetime.utcnow()
         }
         
-        result = await records_collection.insert_one(document)
+        result = await collection.insert_one(document)
         return str(result.inserted_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error saving to MongoDB: {str(e)}")
-
-# Startup event
-@app.on_event("startup")
-async def startup_db_client():
-    """Connect to MongoDB on startup"""
-    try:
-        await mongodb_client.admin.command('ping')
-        print("✅ Connected to MongoDB successfully")
-    except Exception as e:
-        print(f"❌ Failed to connect to MongoDB: {e}")
-
-# Shutdown event
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    """Close MongoDB connection on shutdown"""
-    mongodb_client.close()
-    print("MongoDB connection closed")
 
 @app.get("/")
 async def root():
@@ -446,25 +494,25 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    try:
+        # Test MongoDB connection
+        await mongodb.client.admin.command('ping')
+        mongodb_status = "connected"
+    except:
+        mongodb_status = "disconnected"
+    
     return {
         "status": "healthy",
         "service": "Medical Image Analysis API",
-        "mongodb": "connected" if mongodb_client else "disconnected",
-        "cloudinary": "configured" if CLOUDINARY_CLOUD_NAME != "your-cloud-name" else "not configured"
+        "mongodb": mongodb_status,
+        "cloudinary": "configured"
     }
 
 @app.post("/analyze", response_model=DiagnosisResponse)
 async def analyze_image(file: UploadFile = File(...)):
     """
     Analyze medical image only (without storing)
-    
-    Args:
-        file: Medical image file (JPG, PNG, JPEG, etc.)
-    
-    Returns:
-        DiagnosisResponse with diagnosis in English and Arabic
     """
-    
     allowed_extensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']
     file_extension = file.filename.split('.')[-1].lower()
     
@@ -496,15 +544,7 @@ async def analyze_and_store_image(
 ):
     """
     Analyze medical image, upload to Cloudinary, and store in MongoDB
-    
-    Args:
-        file: Medical image file (JPG, PNG, JPEG, etc.)
-        patient_id: Optional patient ID
-    
-    Returns:
-        StoredDiagnosisResponse with diagnosis and database record
     """
-    
     allowed_extensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']
     file_extension = file.filename.split('.')[-1].lower()
     
@@ -551,21 +591,15 @@ async def get_all_records(
 ):
     """
     Get all medical records
-    
-    Args:
-        patient_id: Optional filter by patient ID
-        limit: Maximum number of records to return
-        skip: Number of records to skip
-    
-    Returns:
-        List of medical records
     """
     try:
+        collection = mongodb.get_records_collection()
+        
         query = {}
         if patient_id:
             query["patient_id"] = patient_id
         
-        cursor = records_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        cursor = collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
         records = await cursor.to_list(length=limit)
         
         # Convert ObjectId to string
@@ -575,21 +609,18 @@ async def get_all_records(
         return records
         
     except Exception as e:
+        print(f"Error fetching records: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching records: {str(e)}")
 
 @app.get("/records/{record_id}", response_model=StoredDiagnosisResponse)
 async def get_record_by_id(record_id: str):
     """
     Get a specific medical record by ID
-    
-    Args:
-        record_id: MongoDB document ID
-    
-    Returns:
-        Medical record
     """
     try:
-        record = await records_collection.find_one({"_id": ObjectId(record_id)})
+        collection = mongodb.get_records_collection()
+        
+        record = await collection.find_one({"_id": ObjectId(record_id)})
         
         if not record:
             raise HTTPException(status_code=404, detail="Record not found")
@@ -604,15 +635,11 @@ async def get_record_by_id(record_id: str):
 async def delete_record(record_id: str):
     """
     Delete a medical record
-    
-    Args:
-        record_id: MongoDB document ID
-    
-    Returns:
-        Success message
     """
     try:
-        result = await records_collection.delete_one({"_id": ObjectId(record_id)})
+        collection = mongodb.get_records_collection()
+        
+        result = await collection.delete_one({"_id": ObjectId(record_id)})
         
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Record not found")
@@ -626,12 +653,6 @@ async def delete_record(record_id: str):
 async def medical_chat(chat_message: ChatMessage):
     """
     Chat with medical AI - Only answers medical questions
-    
-    Args:
-        chat_message: User message and optional patient/session ID
-    
-    Returns:
-        Medical response in English and Arabic
     """
     try:
         if not chat_message.message or chat_message.message.strip() == "":
@@ -670,24 +691,17 @@ async def get_chat_history(
 ):
     """
     Get chat history
-    
-    Args:
-        session_id: Filter by session ID
-        patient_id: Filter by patient ID
-        limit: Maximum number of records
-        skip: Number of records to skip
-    
-    Returns:
-        List of chat messages
     """
     try:
+        collection = mongodb.get_chat_history_collection()
+        
         query = {}
         if session_id:
             query["session_id"] = session_id
         if patient_id:
             query["patient_id"] = patient_id
         
-        cursor = chat_history_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        cursor = collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
         records = await cursor.to_list(length=limit)
         
         # Convert ObjectId to string
@@ -703,15 +717,11 @@ async def get_chat_history(
 async def delete_chat_session(session_id: str):
     """
     Delete all chat messages from a session
-    
-    Args:
-        session_id: Session ID to delete
-    
-    Returns:
-        Success message
     """
     try:
-        result = await chat_history_collection.delete_many({"session_id": session_id})
+        collection = mongodb.get_chat_history_collection()
+        
+        result = await collection.delete_many({"session_id": session_id})
         
         return {
             "message": "Chat session deleted successfully",
